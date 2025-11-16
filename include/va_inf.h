@@ -19,6 +19,33 @@
 #define VI_ERROR_UNIMP                  2
 #define VI_ERROR_TYPE                   3
 #define VI_ERROR_OTHER                  4
+#define VI_ERROR_VAINITIALIZE           100
+#define VI_ERROR_VACREATECONFIG         101
+#define VI_ERROR_VACREATECONTEXT        102
+#define VI_ERROR_VACREATESURFACES       103
+#define VI_ERROR_VACREATEIMAGE          104
+#define VI_ERROR_VAMAPBUFFER            105
+#define VI_ERROR_VAUNMAPBUFFER          106
+#define VI_ERROR_VAPUTIMAGE             107
+#define VI_ERROR_VASYNCSURFACE          108
+#define VI_ERROR_VAPUTSURFACE           109
+#define VI_ERROR_VACREATEBUFFER         110
+#define VI_ERROR_VABEGINPICTURE         111
+#define VI_ERROR_VARENDERPICTURE        112
+#define VI_ERROR_VAENDPICTURE           113
+#define VI_ERROR_VAEXPORTSURFACE        114
+#define VI_ERROR_VADESTROYSURFACES      115
+#define VI_ERROR_VADESTROYIMAGE         116
+
+#define VI_TYPE_H264                    1
+#define VI_TYPE_MPEG2                   2
+
+#define VI_TYPE_DRM                     1
+
+#define VI_NV12                         0x10C
+#define VI_YUY2                         0x110
+
+#define VI_H264_ENC_FLAG_KEYFRAME       0x1
 
 struct va_funcs
 {
