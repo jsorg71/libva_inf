@@ -12,6 +12,10 @@
 
 #include "va_inf.h"
 
+#define VI_H264_SLICE_TYPE_P    0
+#define VI_H264_SLICE_TYPE_B    1
+#define VI_H264_SLICE_TYPE_I    2
+
 static VADisplay g_va_display = NULL;
 static VAConfigID g_vp_config = VA_INVALID_ID;
 static VAContextID g_vp_context = VA_INVALID_ID;
@@ -42,6 +46,7 @@ struct va_inf_enc_priv
     VABufferID rc_param_buf;
 };
 
+/*****************************************************************************/
 static void
 va_inf_encoder_init_picture_list(VAPictureH264* list, size_t count)
 {
@@ -55,6 +60,7 @@ va_inf_encoder_init_picture_list(VAPictureH264* list, size_t count)
     }
 }
 
+/*****************************************************************************/
 static void
 va_inf_encoder_destroy_buffers(struct va_inf_enc_priv* enc)
 {
@@ -78,6 +84,7 @@ va_inf_encoder_destroy_buffers(struct va_inf_enc_priv* enc)
     }
 }
 
+/*****************************************************************************/
 static int
 va_inf_encoder_setup_buffers(struct va_inf_enc_priv* enc,
         int width, int height, int flags)
@@ -96,7 +103,7 @@ va_inf_encoder_setup_buffers(struct va_inf_enc_priv* enc,
     VAEncSequenceParameterBufferH264 seq;
     VAEncPictureParameterBufferH264 pic;
     VAEncSliceParameterBufferH264 slice;
-    struct
+    struct _rc_param
     {
         VAEncMiscParameterBuffer header;
         VAEncMiscParameterRateControl rc;
@@ -225,7 +232,7 @@ va_inf_encoder_setup_buffers(struct va_inf_enc_priv* enc,
 
     memset(&slice, 0, sizeof(slice));
     slice.num_macroblocks = num_macroblocks;
-    slice.slice_type = 2;
+    slice.slice_type = VI_H264_SLICE_TYPE_I;
     slice.pic_parameter_set_id = 0;
     slice.idr_pic_id = 0;
     slice.macroblock_info = VA_INVALID_ID;
@@ -762,7 +769,9 @@ va_inf_encoder_encode(void* obj, void* cdata, int* cdata_max_bytes, int flags)
     slice = (VAEncSliceParameterBufferH264*)buf_ptr;
     slice->macroblock_address = 0;
     slice->num_macroblocks = enc->width_in_mbs * enc->height_in_mbs;
-    slice->slice_type = 2;
+    /* Only advertise I/P slices so the driver never generates B frames. */
+    slice->slice_type = force_idr ? VI_H264_SLICE_TYPE_I :
+            VI_H264_SLICE_TYPE_P;
     slice->idr_pic_id = enc->frame_num & 0xFFFFU;
     va_status = vaUnmapBuffer(g_va_display, enc->slice_param_buf);
     if (va_status != VA_STATUS_SUCCESS)

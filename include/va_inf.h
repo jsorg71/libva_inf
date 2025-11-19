@@ -12,7 +12,7 @@
 #define VI_VERSION_INT(_major, _minor) (((_major) << 16) | (_minor))
 
 #define VI_MAJOR                        0
-#define VI_MINOR                        0
+#define VI_MINOR                        1
 
 #define VI_SUCCESS                      0
 #define VI_ERROR_MEMORY                 1
@@ -64,7 +64,7 @@ struct va_funcs
     int (*encoder_set_fd_src)(void *obj, int fd, int fd_width, int fd_height,
                               int fd_stride, int fd_size, int fd_bpp);
     int (*encoder_encode)(void *obj, void *cdata, int *cdata_max_bytes, int flags);
-    VI_UINTPTR pad1[20 - 10];
+    VI_UINTPTR pad1[20 - 9];
 };
 
 typedef int
