@@ -63,8 +63,7 @@ struct va_funcs
     int (*encoder_get_uvbuffer)(void *obj, void **uvdata, int *uvdata_stride_bytes);
     int (*encoder_set_fd_src)(void *obj, int fd, int fd_width, int fd_height,
                               int fd_stride, int fd_size, int fd_bpp);
-    int (*encoder_encode)(void *obj, void *cdata, int *cdata_max_bytes);
-    int (*encoder_encode_flags)(void *obj, void *cdata, int *cdata_max_bytes, int flags);
+    int (*encoder_encode)(void *obj, void *cdata, int *cdata_max_bytes, int flags);
     VI_UINTPTR pad1[20 - 10];
 };
 
