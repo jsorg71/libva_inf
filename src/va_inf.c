@@ -855,7 +855,7 @@ va_inf_encoder_encode(void* obj, void* cdata, int* cdata_max_bytes, int flags)
 int
 va_inf_get_funcs(struct va_funcs* funcs, int version)
 {
-    if (version >= VI_VERSION_INT(0, 2))
+    if (version >= VI_VERSION_INT(VI_MAJOR, VI_MINOR))
     {
         funcs->get_version = va_inf_get_version;
         funcs->init = va_inf_init;

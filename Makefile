@@ -1,7 +1,7 @@
 
 OBJS=src/va_inf.o
 
-CFLAGS=-O2 -Wall -Wextra -fvisibility=hidden -fPIC -Iinclude
+CFLAGS=-O2 -Wall -Wextra -fPIC -Iinclude
 CFLAGS+=$(shell pkg-config --cflags libva-drm)
 
 LDFLAGS=
