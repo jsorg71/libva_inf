@@ -31,7 +31,7 @@ struct va_inf_enc_priv
     int fd_yami_fourcc;
     int pad0;
     VAImage va_image[1];
-    char* yuvdata;
+    char *yuvdata;
     VASurfaceID enc_surface;
     VAConfigID enc_config;
     VAContextID enc_context;
@@ -48,7 +48,7 @@ struct va_inf_enc_priv
 
 /*****************************************************************************/
 static void
-va_inf_encoder_init_picture_list(VAPictureH264* list, size_t count)
+va_inf_encoder_init_picture_list(VAPictureH264 *list, size_t count)
 {
     size_t index;
 
@@ -62,10 +62,10 @@ va_inf_encoder_init_picture_list(VAPictureH264* list, size_t count)
 
 /*****************************************************************************/
 static void
-va_inf_encoder_destroy_buffers(struct va_inf_enc_priv* enc)
+va_inf_encoder_destroy_buffers(struct va_inf_enc_priv *enc)
 {
     size_t index;
-    VABufferID* buffers[] =
+    VABufferID *buffers[] =
     {
         &enc->seq_param_buf,
         &enc->pic_param_buf,
@@ -86,7 +86,7 @@ va_inf_encoder_destroy_buffers(struct va_inf_enc_priv* enc)
 
 /*****************************************************************************/
 static int
-va_inf_encoder_setup_buffers(struct va_inf_enc_priv* enc,
+va_inf_encoder_setup_buffers(struct va_inf_enc_priv *enc,
         int width, int height, int flags)
 {
     const unsigned int frame_rate = 30;
@@ -277,7 +277,7 @@ va_inf_encoder_setup_buffers(struct va_inf_enc_priv* enc,
 
 /*****************************************************************************/
 static void
-va_inf_encoder_destroy_priv(struct va_inf_enc_priv* enc)
+va_inf_encoder_destroy_priv(struct va_inf_enc_priv *enc)
 {
     if (enc == NULL)
     {
@@ -298,7 +298,7 @@ va_inf_encoder_destroy_priv(struct va_inf_enc_priv* enc)
 
 /*****************************************************************************/
 static int
-va_inf_get_version(int* version)
+va_inf_get_version(int *version)
 {
     *version = VI_VERSION_INT(VI_MAJOR, VI_MINOR);
     return VI_SUCCESS;
@@ -306,7 +306,7 @@ va_inf_get_version(int* version)
 
 /*****************************************************************************/
 static int
-va_inf_init(int type, void* display)
+va_inf_init(int type, void *display)
 {
     int fd;
     int major_version;
@@ -357,16 +357,16 @@ va_inf_deinit(void)
 
 /*****************************************************************************/
 static int
-va_inf_encoder_create(void** obj, int width, int height, int type, int flags)
+va_inf_encoder_create(void **obj, int width, int height, int type, int flags)
 {
-    struct va_inf_enc_priv* enc;
+    struct va_inf_enc_priv *enc;
     VASurfaceAttrib attribs[1];
     VAStatus va_status;
     VAImageFormat va_image_format;
     VAConfigAttrib config_attrib;
     int error;
 
-    enc = (struct va_inf_enc_priv*)
+    enc = (struct va_inf_enc_priv *)
             calloc(1, sizeof(struct va_inf_enc_priv));
     if (enc == NULL)
     {
@@ -386,7 +386,7 @@ va_inf_encoder_create(void** obj, int width, int height, int type, int flags)
     {
         memset(&config_attrib, 0, sizeof(config_attrib));
         config_attrib.type = VAConfigAttribRTFormat;
-        va_status = vaGetConfigAttributes(g_va_display, VAProfileH264High,
+        va_status = vaGetConfigAttributes(g_va_display, VAProfileH264Main,
                 VAEntrypointEncSlice, &config_attrib, 1);
         if (va_status != VA_STATUS_SUCCESS)
         {
@@ -399,7 +399,7 @@ va_inf_encoder_create(void** obj, int width, int height, int type, int flags)
             return VI_ERROR_OTHER;
         }
         config_attrib.value = VA_RT_FORMAT_YUV420;
-        va_status = vaCreateConfig(g_va_display, VAProfileH264High,
+        va_status = vaCreateConfig(g_va_display, VAProfileH264Main,
                 VAEntrypointEncSlice, &config_attrib, 1, &enc->enc_config);
         if (va_status != VA_STATUS_SUCCESS)
         {
@@ -467,11 +467,11 @@ va_inf_encoder_create(void** obj, int width, int height, int type, int flags)
 
 /*****************************************************************************/
 static int
-va_inf_encoder_delete(void* obj)
+va_inf_encoder_delete(void *obj)
 {
-    struct va_inf_enc_priv* enc;
+    struct va_inf_enc_priv *enc;
 
-    enc = (struct va_inf_enc_priv*)obj;
+    enc = (struct va_inf_enc_priv *) obj;
     if (enc == NULL)
     {
         return VI_SUCCESS;
@@ -487,37 +487,27 @@ va_inf_encoder_delete(void* obj)
 
 /*****************************************************************************/
 static int
-va_inf_encoder_get_width(void* obj, int* width)
+va_inf_encoder_get_size(void *obj, int *width, int *height)
 {
-    struct va_inf_enc_priv* enc;
+    struct va_inf_enc_priv *enc;
 
-    enc = (struct va_inf_enc_priv*)obj;
+    enc = (struct va_inf_enc_priv *) obj;
     *width = enc->width;
-    return VI_SUCCESS;
-}
-
-/*****************************************************************************/
-static int
-va_inf_encoder_get_height(void* obj, int* height)
-{
-    struct va_inf_enc_priv* enc;
-
-    enc = (struct va_inf_enc_priv*)obj;
     *height = enc->height;
     return VI_SUCCESS;
 }
 
 /*****************************************************************************/
 static int
-va_inf_encoder_resize(void* obj, int width, int height)
+va_inf_encoder_set_size(void *obj, int width, int height)
 {
-    struct va_inf_enc_priv* enc;
+    struct va_inf_enc_priv *enc;
     VAStatus va_status;
     VAImageFormat va_image_format;
     VASurfaceAttrib attribs[1];
     int error;
 
-    enc = (struct va_inf_enc_priv*)obj;
+    enc = (struct va_inf_enc_priv *) obj;
     va_status = vaDestroyImage(g_va_display, enc->va_image[0].image_id);
     if (va_status != VA_STATUS_SUCCESS)
     {
@@ -569,13 +559,13 @@ va_inf_encoder_resize(void* obj, int width, int height)
 
 /*****************************************************************************/
 static int
-va_inf_encoder_get_ybuffer(void* obj, void** ydata, int* ydata_stride_bytes)
+va_inf_encoder_get_ybuffer(void *obj, void **ydata, int *ydata_stride_bytes)
 {
-    struct va_inf_enc_priv* enc;
+    struct va_inf_enc_priv *enc;
     VAStatus va_status;
-    void* buf_ptr;
+    void *buf_ptr;
 
-    enc = (struct va_inf_enc_priv*)obj;
+    enc = (struct va_inf_enc_priv *) obj;
     if (enc->yuvdata == NULL)
     {
         va_status = vaMapBuffer(g_va_display, enc->va_image[0].buf, &buf_ptr);
@@ -583,7 +573,7 @@ va_inf_encoder_get_ybuffer(void* obj, void** ydata, int* ydata_stride_bytes)
         {
             return VI_ERROR_VAMAPBUFFER;
         }
-        enc->yuvdata = (char*)buf_ptr;
+        enc->yuvdata = (char *) buf_ptr;
     }
     *ydata = enc->yuvdata + enc->va_image[0].offsets[0];
     *ydata_stride_bytes = enc->va_image[0].pitches[0];
@@ -592,13 +582,13 @@ va_inf_encoder_get_ybuffer(void* obj, void** ydata, int* ydata_stride_bytes)
 
 /*****************************************************************************/
 static int
-va_inf_encoder_get_uvbuffer(void* obj, void** uvdata, int* uvdata_stride_bytes)
+va_inf_encoder_get_uvbuffer(void *obj, void **uvdata, int *uvdata_stride_bytes)
 {
-    struct va_inf_enc_priv* enc;
+    struct va_inf_enc_priv *enc;
     VAStatus va_status;
-    void* buf_ptr;
+    void *buf_ptr;
 
-    enc = (struct va_inf_enc_priv*)obj;
+    enc = (struct va_inf_enc_priv *) obj;
     if (enc->yuvdata == NULL)
     {
         va_status = vaMapBuffer(g_va_display, enc->va_image[0].buf, &buf_ptr);
@@ -606,7 +596,7 @@ va_inf_encoder_get_uvbuffer(void* obj, void** uvdata, int* uvdata_stride_bytes)
         {
             return VI_ERROR_VAMAPBUFFER;
         }
-        enc->yuvdata = (char*)buf_ptr;
+        enc->yuvdata = (char *) buf_ptr;
     }
     *uvdata = enc->yuvdata + enc->va_image[0].offsets[1];
     *uvdata_stride_bytes = enc->va_image[0].pitches[1];
@@ -615,17 +605,17 @@ va_inf_encoder_get_uvbuffer(void* obj, void** uvdata, int* uvdata_stride_bytes)
 
 /*****************************************************************************/
 static int
-va_inf_encoder_set_fd_src(void* obj, int fd, int fd_width, int fd_height,
+va_inf_encoder_set_fd_src(void *obj, int fd, int fd_width, int fd_height,
         int fd_stride, int fd_size, int fd_bpp)
 {
-    struct va_inf_enc_priv* enc;
+    struct va_inf_enc_priv *enc;
     VASurfaceAttribExternalBuffers external;
     VASurfaceAttrib attribs[2];
     unsigned long fd_handle;
     VAStatus va_status;
     VASurfaceID surface;
 
-    enc = (struct va_inf_enc_priv*)obj;
+    enc = (struct va_inf_enc_priv *) obj;
     fd_handle = (unsigned long) fd;
     memset(&external, 0, sizeof(external));
     external.pixel_format = VA_FOURCC_BGRX;
@@ -679,24 +669,24 @@ va_inf_encoder_set_fd_src(void* obj, int fd, int fd_width, int fd_height,
 
 /*****************************************************************************/
 static int
-va_inf_encoder_encode(void* obj, void* cdata, int* cdata_max_bytes, int flags)
+va_inf_encoder_encode(void *obj, void *cdata, int *cdata_max_bytes, int flags)
 {
-    struct va_inf_enc_priv* enc;
+    struct va_inf_enc_priv *enc;
     VAStatus va_status;
     int width;
     int height;
     int force_idr;
-    void* buf_ptr;
-    VAEncPictureParameterBufferH264* pic;
-    VAEncSliceParameterBufferH264* slice;
+    void *buf_ptr;
+    VAEncPictureParameterBufferH264 *pic;
+    VAEncSliceParameterBufferH264 *slice;
     VABufferID buffers[4];
     unsigned int buffer_count;
-    VACodedBufferSegment* segment;
-    unsigned char* dst;
+    VACodedBufferSegment *segment;
+    unsigned char *dst;
     unsigned int dst_size;
     unsigned int bytes_written;
 
-    enc = (struct va_inf_enc_priv*)obj;
+    enc = (struct va_inf_enc_priv *) obj;
     if (enc->yuvdata != NULL)
     {
         va_status = vaUnmapBuffer(g_va_display, enc->va_image[0].buf);
@@ -723,20 +713,18 @@ va_inf_encoder_encode(void* obj, void* cdata, int* cdata_max_bytes, int flags)
         }
         enc->enc_surface = enc->va_surface[0];
     }
-
     va_status = vaSyncSurface(g_va_display, enc->enc_surface);
     if (va_status != VA_STATUS_SUCCESS)
     {
         return VI_ERROR_VASYNCSURFACE;
     }
-
-    if ((cdata == NULL) || (cdata_max_bytes == NULL) || (*cdata_max_bytes <= 0))
+    if ((cdata == NULL) || (cdata_max_bytes == NULL) ||
+            (*cdata_max_bytes <= 0))
     {
         return VI_ERROR_OTHER;
     }
-
     force_idr = (flags & VI_H264_ENC_FLAG_KEYFRAME) != 0;
-    if ((enc->idr_period != 0) && (enc->frame_num % enc->idr_period == 0))
+    if ((enc->idr_period != 0) && ((enc->frame_num % enc->idr_period) == 0))
     {
         force_idr = 1;
     }
@@ -744,13 +732,12 @@ va_inf_encoder_encode(void* obj, void* cdata, int* cdata_max_bytes, int flags)
     {
         force_idr = 1;
     }
-
     va_status = vaMapBuffer(g_va_display, enc->pic_param_buf, &buf_ptr);
     if (va_status != VA_STATUS_SUCCESS)
     {
         return VI_ERROR_VAMAPBUFFER;
     }
-    pic = (VAEncPictureParameterBufferH264*)buf_ptr;
+    pic = (VAEncPictureParameterBufferH264 *) buf_ptr;
     pic->CurrPic.picture_id = enc->enc_surface;
     pic->CurrPic.frame_idx = enc->frame_num;
     pic->frame_num = enc->frame_num;
@@ -760,7 +747,6 @@ va_inf_encoder_encode(void* obj, void* cdata, int* cdata_max_bytes, int flags)
     {
         return VI_ERROR_VAUNMAPBUFFER;
     }
-
     va_status = vaMapBuffer(g_va_display, enc->slice_param_buf, &buf_ptr);
     if (va_status != VA_STATUS_SUCCESS)
     {
@@ -778,13 +764,12 @@ va_inf_encoder_encode(void* obj, void* cdata, int* cdata_max_bytes, int flags)
     {
         return VI_ERROR_VAUNMAPBUFFER;
     }
-
-    va_status = vaBeginPicture(g_va_display, enc->enc_context, enc->enc_surface);
+    va_status = vaBeginPicture(g_va_display, enc->enc_context,
+            enc->enc_surface);
     if (va_status != VA_STATUS_SUCCESS)
     {
         return VI_ERROR_VABEGINPICTURE;
     }
-
     buffer_count = 0;
     if (enc->seq_param_buf != VA_INVALID_ID)
     {
@@ -812,21 +797,19 @@ va_inf_encoder_encode(void* obj, void* cdata, int* cdata_max_bytes, int flags)
             return VI_ERROR_VARENDERPICTURE;
         }
     }
-
     va_status = vaEndPicture(g_va_display, enc->enc_context);
     if (va_status != VA_STATUS_SUCCESS)
     {
         return VI_ERROR_VAENDPICTURE;
     }
-
     va_status = vaMapBuffer(g_va_display, enc->coded_buf, &buf_ptr);
     if (va_status != VA_STATUS_SUCCESS)
     {
         return VI_ERROR_VAMAPBUFFER;
     }
-    segment = (VACodedBufferSegment*)buf_ptr;
-    dst = (unsigned char*)cdata;
-    dst_size = (unsigned int)(*cdata_max_bytes);
+    segment = (VACodedBufferSegment *) buf_ptr;
+    dst = (unsigned char *) cdata;
+    dst_size = (unsigned int) (*cdata_max_bytes);
     bytes_written = 0;
     while (segment != NULL)
     {
@@ -837,23 +820,21 @@ va_inf_encoder_encode(void* obj, void* cdata, int* cdata_max_bytes, int flags)
         }
         memcpy(dst + bytes_written, segment->buf, segment->size);
         bytes_written += segment->size;
-        segment = (VACodedBufferSegment*)segment->next;
+        segment = (VACodedBufferSegment *) (segment->next);
     }
     va_status = vaUnmapBuffer(g_va_display, enc->coded_buf);
     if (va_status != VA_STATUS_SUCCESS)
     {
         return VI_ERROR_VAUNMAPBUFFER;
     }
-
     *cdata_max_bytes = (int)bytes_written;
     enc->frame_num++;
-
     return VI_SUCCESS;
 }
 
 /*****************************************************************************/
 int
-va_inf_get_funcs(struct va_funcs* funcs, int version)
+va_inf_get_funcs(struct va_funcs *funcs, int version)
 {
     if (version >= VI_VERSION_INT(VI_MAJOR, VI_MINOR))
     {
@@ -863,9 +844,8 @@ va_inf_get_funcs(struct va_funcs* funcs, int version)
         /* encoder */
         funcs->encoder_create = va_inf_encoder_create;
         funcs->encoder_delete = va_inf_encoder_delete;
-        funcs->encoder_get_width = va_inf_encoder_get_width;
-        funcs->encoder_get_height = va_inf_encoder_get_height;
-        funcs->encoder_resize = va_inf_encoder_resize;
+        funcs->encoder_get_size = va_inf_encoder_get_size;
+        funcs->encoder_set_size = va_inf_encoder_set_size;
         funcs->encoder_get_ybuffer = va_inf_encoder_get_ybuffer;
         funcs->encoder_get_uvbuffer = va_inf_encoder_get_uvbuffer;
         funcs->encoder_set_fd_src = va_inf_encoder_set_fd_src;

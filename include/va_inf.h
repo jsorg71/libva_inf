@@ -56,15 +56,14 @@ struct va_funcs
     /* encoder */
     int (*encoder_create)(void **obj, int width, int height, int type, int flags);
     int (*encoder_delete)(void *obj);
-    int (*encoder_get_width)(void *obj, int *width);
-    int (*encoder_get_height)(void *obj, int *height);
-    int (*encoder_resize)(void *obj, int width, int height);
+    int (*encoder_get_size)(void *obj, int *width, int *height);
+    int (*encoder_set_size)(void *obj, int width, int height);
     int (*encoder_get_ybuffer)(void *obj, void **ydata, int *ydata_stride_bytes);
     int (*encoder_get_uvbuffer)(void *obj, void **uvdata, int *uvdata_stride_bytes);
     int (*encoder_set_fd_src)(void *obj, int fd, int fd_width, int fd_height,
                               int fd_stride, int fd_size, int fd_bpp);
     int (*encoder_encode)(void *obj, void *cdata, int *cdata_max_bytes, int flags);
-    VI_UINTPTR pad1[20 - 9];
+    VI_UINTPTR pad1[20 - 8];
 };
 
 typedef int
