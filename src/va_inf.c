@@ -365,6 +365,7 @@ va_inf_encoder_create(void **obj, int width, int height, int type, int flags)
     VAImageFormat va_image_format;
     VAConfigAttrib config_attrib;
     int error;
+    VAProfile profile;
 
     enc = (struct va_inf_enc_priv *)
             calloc(1, sizeof(struct va_inf_enc_priv));
@@ -382,11 +383,24 @@ va_inf_encoder_create(void **obj, int width, int height, int type, int flags)
     enc->rc_param_buf = VA_INVALID_ID;
     enc->enc_config = VA_INVALID_ID;
     enc->enc_context = VA_INVALID_ID;
+    profile = VAProfileNone;
     if (type == VI_TYPE_H264)
     {
+        switch (flags & VI_H264_ENC_FLAGS_PROFILE_MASK)
+        {
+            case VI_H264_ENC_FLAGS_PROFILE_MAIN:
+                profile = VAProfileH264Main;
+                break;
+            case VI_H264_ENC_FLAGS_PROFILE_HIGH:
+                profile = VAProfileH264High;
+                break;
+            default:
+                profile = VAProfileH264ConstrainedBaseline;
+                break;
+        }
         memset(&config_attrib, 0, sizeof(config_attrib));
         config_attrib.type = VAConfigAttribRTFormat;
-        va_status = vaGetConfigAttributes(g_va_display, VAProfileH264Main,
+        va_status = vaGetConfigAttributes(g_va_display, profile,
                 VAEntrypointEncSlice, &config_attrib, 1);
         if (va_status != VA_STATUS_SUCCESS)
         {
@@ -399,7 +413,7 @@ va_inf_encoder_create(void **obj, int width, int height, int type, int flags)
             return VI_ERROR_OTHER;
         }
         config_attrib.value = VA_RT_FORMAT_YUV420;
-        va_status = vaCreateConfig(g_va_display, VAProfileH264Main,
+        va_status = vaCreateConfig(g_va_display, profile,
                 VAEntrypointEncSlice, &config_attrib, 1, &enc->enc_config);
         if (va_status != VA_STATUS_SUCCESS)
         {

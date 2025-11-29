@@ -40,6 +40,10 @@
 #define VI_TYPE_H264                    1
 #define VI_TYPE_MPEG2                   2
 
+#define VI_H264_ENC_FLAGS_PROFILE_MASK  0x0000000F
+#define VI_H264_ENC_FLAGS_PROFILE_MAIN  (1 << 0)
+#define VI_H264_ENC_FLAGS_PROFILE_HIGH  (2 << 0)
+
 #define VI_TYPE_DRM                     1
 
 #define VI_NV12                         0x10C

@@ -32,7 +32,8 @@ main(int argc, char **argv)
         error = fns.init(VI_TYPE_DRM, (void*)fd);
 
         void *enc;
-        error = fns.encoder_create(&enc, 640, 480, VI_TYPE_H264, 0);
+        error = fns.encoder_create(&enc, 640, 480, VI_TYPE_H264,
+                VI_H264_ENC_FLAGS_PROFILE_MAIN);
         printf("main: encoder_create rv %d\n", error);
 
         if (error == VI_SUCCESS)
