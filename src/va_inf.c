@@ -13,7 +13,6 @@
 #include "va_inf.h"
 
 #define VI_H264_SLICE_TYPE_P    0
-#define VI_H264_SLICE_TYPE_B    1
 #define VI_H264_SLICE_TYPE_I    2
 
 static VADisplay g_va_display = NULL;
@@ -26,7 +25,7 @@ struct va_inf_enc_priv
     int height;
     int type;
     int flags;
-    VASurfaceID va_surface[1];
+    VASurfaceID va_surface[2];
     VASurfaceID fd_va_surface[1];
     int fd_yami_fourcc;
     int pad0;
@@ -44,6 +43,10 @@ struct va_inf_enc_priv
     VABufferID pic_param_buf;
     VABufferID slice_param_buf;
     VABufferID rc_param_buf;
+    VASurfaceID ref_surface_id;
+    unsigned int ref_frame_idx;
+    int ref_poc;
+    unsigned int current_surf_idx;
 };
 
 /*****************************************************************************/
@@ -124,7 +127,8 @@ va_inf_encoder_setup_buffers(struct va_inf_enc_priv *enc,
     padded_width = width_in_mbs * 16;
     padded_height = height_in_mbs * 16;
     num_macroblocks = width_in_mbs * height_in_mbs;
-    idr_period = frame_rate * 2;
+    /* Use a 1024-frame GOP: I + 1023 P-frames. */
+    idr_period = 1024;
 
     bitrate_calc = (uint64_t) width * (uint64_t) height * frame_rate;
     bitrate_calc /= 2;
@@ -256,12 +260,13 @@ va_inf_encoder_setup_buffers(struct va_inf_enc_priv *enc,
 
     memset(&rc_param, 0, sizeof(rc_param));
     rc_param.header.type = VAEncMiscParameterTypeRateControl;
-    rc_param.rc.bits_per_second = bitrate;
-    rc_param.rc.target_percentage = 66;
-    rc_param.rc.window_size = 1000;
+    rc_param.rc.bits_per_second = 0;
+    rc_param.rc.target_percentage = 0;
+    rc_param.rc.window_size = 0;
     rc_param.rc.initial_qp = 26;
-    rc_param.rc.min_qp = 10;
+    rc_param.rc.min_qp = 0;
     rc_param.rc.basic_unit_size = 0;
+    rc_param.rc.rc_flags.bits.disable_frame_skip = 1;
 
     va_status = vaCreateBuffer(g_va_display, enc->enc_context,
             VAEncMiscParameterBufferType, sizeof(rc_param), 1, &rc_param,
@@ -363,7 +368,6 @@ va_inf_encoder_create(void **obj, int width, int height, int type, int flags)
     VASurfaceAttrib attribs[1];
     VAStatus va_status;
     VAImageFormat va_image_format;
-    VAConfigAttrib config_attrib;
     int error;
     VAProfile profile;
 
@@ -374,6 +378,7 @@ va_inf_encoder_create(void **obj, int width, int height, int type, int flags)
         return VI_ERROR_MEMORY;
     }
     enc->va_surface[0] = VA_INVALID_SURFACE;
+    enc->va_surface[1] = VA_INVALID_SURFACE;
     enc->fd_va_surface[0] = VA_INVALID_SURFACE;
     enc->enc_surface = VA_INVALID_SURFACE;
     enc->coded_buf = VA_INVALID_ID;
@@ -383,9 +388,15 @@ va_inf_encoder_create(void **obj, int width, int height, int type, int flags)
     enc->rc_param_buf = VA_INVALID_ID;
     enc->enc_config = VA_INVALID_ID;
     enc->enc_context = VA_INVALID_ID;
+    enc->ref_surface_id = VA_INVALID_SURFACE;
+    enc->ref_frame_idx = 0;
+    enc->ref_poc = 0;
+    enc->current_surf_idx = 0;
     profile = VAProfileNone;
     if (type == VI_TYPE_H264)
     {
+        VAConfigAttrib config_attribs[2];
+
         switch (flags & VI_H264_ENC_FLAGS_PROFILE_MASK)
         {
             case VI_H264_ENC_FLAGS_PROFILE_MAIN:
@@ -398,35 +409,30 @@ va_inf_encoder_create(void **obj, int width, int height, int type, int flags)
                 profile = VAProfileH264ConstrainedBaseline;
                 break;
         }
-        memset(&config_attrib, 0, sizeof(config_attrib));
-        config_attrib.type = VAConfigAttribRTFormat;
+
+        memset(config_attribs, 0, sizeof(config_attribs));
+        config_attribs[0].type = VAConfigAttribRTFormat;
+        config_attribs[1].type = VAConfigAttribRateControl;
         va_status = vaGetConfigAttributes(g_va_display, profile,
-                VAEntrypointEncSlice, &config_attrib, 1);
+                VAEntrypointEncSlice, config_attribs, 2);
         if (va_status != VA_STATUS_SUCCESS)
         {
             free(enc);
             return VI_ERROR_VACREATECONFIG;
         }
-        if ((config_attrib.value & VA_RT_FORMAT_YUV420) == 0)
+        if ((config_attribs[0].value & VA_RT_FORMAT_YUV420) == 0)
         {
             free(enc);
             return VI_ERROR_OTHER;
         }
-        config_attrib.value = VA_RT_FORMAT_YUV420;
+        config_attribs[0].value = VA_RT_FORMAT_YUV420;
+        config_attribs[1].value = VA_RC_CQP;
         va_status = vaCreateConfig(g_va_display, profile,
-                VAEntrypointEncSlice, &config_attrib, 1, &enc->enc_config);
+                VAEntrypointEncSlice, config_attribs, 2, &enc->enc_config);
         if (va_status != VA_STATUS_SUCCESS)
         {
             free(enc);
             return VI_ERROR_VACREATECONFIG;
-        }
-        va_status = vaCreateContext(g_va_display, enc->enc_config,
-                width, height, VA_PROGRESSIVE, NULL, 0, &enc->enc_context);
-        if (va_status != VA_STATUS_SUCCESS)
-        {
-            va_inf_encoder_destroy_priv(enc);
-            free(enc);
-            return VI_ERROR_VACREATECONTEXT;
         }
     }
     else
@@ -434,18 +440,32 @@ va_inf_encoder_create(void **obj, int width, int height, int type, int flags)
         free(enc);
         return VI_ERROR_TYPE;
     }
+    /* Create surfaces before context */
     memset(attribs, 0, sizeof(attribs));
     attribs[0].type = VASurfaceAttribPixelFormat;
     attribs[0].flags = VA_SURFACE_ATTRIB_SETTABLE;
     attribs[0].value.type = VAGenericValueTypeInteger;
     attribs[0].value.value.i = VA_FOURCC_NV12;
     va_status = vaCreateSurfaces(g_va_display, VA_RT_FORMAT_YUV420,
-            width, height, enc->va_surface, 1, attribs, 1);
+            width, height, enc->va_surface, 2, attribs, 1);
     if (va_status != VA_STATUS_SUCCESS)
     {
         va_inf_encoder_destroy_priv(enc);
         free(enc);
         return VI_ERROR_VACREATESURFACES;
+    }
+    /* Now create context with the surfaces as render targets */
+    if (type == VI_TYPE_H264)
+    {
+        va_status = vaCreateContext(g_va_display, enc->enc_config,
+                width, height, VA_PROGRESSIVE, enc->va_surface, 2, &enc->enc_context);
+        if (va_status != VA_STATUS_SUCCESS)
+        {
+            vaDestroySurfaces(g_va_display, enc->va_surface, 2);
+            va_inf_encoder_destroy_priv(enc);
+            free(enc);
+            return VI_ERROR_VACREATECONTEXT;
+        }
     }
     memset(&va_image_format, 0, sizeof(va_image_format));
     va_image_format.fourcc = VA_FOURCC_NV12;
@@ -491,7 +511,7 @@ va_inf_encoder_delete(void *obj)
         return VI_SUCCESS;
     }
     vaDestroyImage(g_va_display, enc->va_image[0].image_id);
-    vaDestroySurfaces(g_va_display, enc->va_surface, 1);
+    vaDestroySurfaces(g_va_display, enc->va_surface, 2);
 
     va_inf_encoder_destroy_priv(enc);
 
@@ -527,7 +547,7 @@ va_inf_encoder_set_size(void *obj, int width, int height)
     {
         return VI_ERROR_VADESTROYIMAGE;
     }
-    va_status = vaDestroySurfaces(g_va_display, enc->va_surface, 1);
+    va_status = vaDestroySurfaces(g_va_display, enc->va_surface, 2);
     if (va_status != VA_STATUS_SUCCESS)
     {
         return VI_ERROR_VADESTROYSURFACES;
@@ -538,7 +558,7 @@ va_inf_encoder_set_size(void *obj, int width, int height)
     attribs[0].value.type = VAGenericValueTypeInteger;
     attribs[0].value.value.i = VA_FOURCC_NV12;
     va_status = vaCreateSurfaces(g_va_display, VA_RT_FORMAT_YUV420,
-            width, height, enc->va_surface, 1, attribs, 1);
+            width, height, enc->va_surface, 2, attribs, 1);
     if (va_status != VA_STATUS_SUCCESS)
     {
         return VI_ERROR_VACREATESURFACES;
@@ -568,6 +588,10 @@ va_inf_encoder_set_size(void *obj, int width, int height)
     enc->yuvdata = NULL;
     enc->width = width;
     enc->height = height;
+    enc->ref_surface_id = VA_INVALID_SURFACE;
+    enc->ref_frame_idx = 0;
+    enc->ref_poc = 0;
+    enc->current_surf_idx = 0;
     return VI_SUCCESS;
 }
 
@@ -718,14 +742,14 @@ va_inf_encoder_encode(void *obj, void *cdata, int *cdata_max_bytes, int flags)
     {
         width = enc->va_image[0].width;
         height = enc->va_image[0].height;
-        va_status = vaPutImage(g_va_display, enc->va_surface[0],
+        va_status = vaPutImage(g_va_display, enc->va_surface[enc->current_surf_idx],
                 enc->va_image[0].image_id, 0, 0, width, height, 0, 0,
                 width, height);
         if (va_status != VA_STATUS_SUCCESS)
         {
             return VI_ERROR_VAPUTIMAGE;
         }
-        enc->enc_surface = enc->va_surface[0];
+        enc->enc_surface = enc->va_surface[enc->current_surf_idx];
     }
     va_status = vaSyncSurface(g_va_display, enc->enc_surface);
     if (va_status != VA_STATUS_SUCCESS)
@@ -754,8 +778,28 @@ va_inf_encoder_encode(void *obj, void *cdata, int *cdata_max_bytes, int flags)
     pic = (VAEncPictureParameterBufferH264 *) buf_ptr;
     pic->CurrPic.picture_id = enc->enc_surface;
     pic->CurrPic.frame_idx = enc->frame_num;
+    pic->CurrPic.flags = VA_PICTURE_H264_SHORT_TERM_REFERENCE;
+    pic->CurrPic.TopFieldOrderCnt = enc->frame_num * 2;
+    pic->CurrPic.BottomFieldOrderCnt = enc->frame_num * 2;
     pic->frame_num = enc->frame_num;
     pic->pic_fields.bits.idr_pic_flag = force_idr ? 1 : 0;
+    pic->pic_fields.bits.reference_pic_flag = 1;
+
+    /* Set up reference frames for P-frames */
+    if (!force_idr && enc->ref_surface_id != VA_INVALID_SURFACE)
+    {
+        pic->ReferenceFrames[0].picture_id = enc->ref_surface_id;
+        pic->ReferenceFrames[0].frame_idx = enc->ref_frame_idx;
+        pic->ReferenceFrames[0].flags = VA_PICTURE_H264_SHORT_TERM_REFERENCE;
+        pic->ReferenceFrames[0].TopFieldOrderCnt = enc->ref_poc;
+        pic->ReferenceFrames[0].BottomFieldOrderCnt = enc->ref_poc;
+    }
+    else
+    {
+        va_inf_encoder_init_picture_list(pic->ReferenceFrames,
+                sizeof(pic->ReferenceFrames) / sizeof(pic->ReferenceFrames[0]));
+    }
+
     va_status = vaUnmapBuffer(g_va_display, enc->pic_param_buf);
     if (va_status != VA_STATUS_SUCCESS)
     {
@@ -773,6 +817,23 @@ va_inf_encoder_encode(void *obj, void *cdata, int *cdata_max_bytes, int flags)
     slice->slice_type = force_idr ? VI_H264_SLICE_TYPE_I :
             VI_H264_SLICE_TYPE_P;
     slice->idr_pic_id = enc->frame_num & 0xFFFFU;
+    slice->pic_order_cnt_lsb = (enc->frame_num * 2) & 0xFFFF;
+
+    /* Set up reference list for P-frame slices */
+    if (!force_idr && enc->ref_surface_id != VA_INVALID_SURFACE)
+    {
+        slice->RefPicList0[0].picture_id = enc->ref_surface_id;
+        slice->RefPicList0[0].frame_idx = enc->ref_frame_idx;
+        slice->RefPicList0[0].flags = VA_PICTURE_H264_SHORT_TERM_REFERENCE;
+        slice->RefPicList0[0].TopFieldOrderCnt = enc->ref_poc;
+        slice->RefPicList0[0].BottomFieldOrderCnt = enc->ref_poc;
+    }
+    else
+    {
+        va_inf_encoder_init_picture_list(slice->RefPicList0,
+                sizeof(slice->RefPicList0) / sizeof(slice->RefPicList0[0]));
+    }
+
     va_status = vaUnmapBuffer(g_va_display, enc->slice_param_buf);
     if (va_status != VA_STATUS_SUCCESS)
     {
@@ -842,7 +903,17 @@ va_inf_encoder_encode(void *obj, void *cdata, int *cdata_max_bytes, int flags)
         return VI_ERROR_VAUNMAPBUFFER;
     }
     *cdata_max_bytes = (int)bytes_written;
+
+    /* Save current frame as reference for next P-frame */
+    enc->ref_surface_id = enc->enc_surface;
+    enc->ref_frame_idx = enc->frame_num;
+    enc->ref_poc = enc->frame_num * 2;
+
     enc->frame_num++;
+
+    /* Alternate between the two surfaces */
+    enc->current_surf_idx = 1 - enc->current_surf_idx;
+
     return VI_SUCCESS;
 }
 

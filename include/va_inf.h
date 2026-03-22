@@ -46,6 +46,7 @@
 
 #define VI_TYPE_DRM                     1
 
+// used with encoder_set_fd_src, fd_bpp
 #define VI_NV12                         0x10C
 #define VI_YUY2                         0x110
 
