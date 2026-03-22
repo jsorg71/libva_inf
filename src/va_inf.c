@@ -47,6 +47,12 @@ struct va_inf_enc_priv
     unsigned int ref_frame_idx;
     int ref_poc;
     unsigned int current_surf_idx;
+    VAEncSequenceParameterBufferH264 seq_param_data;
+    struct
+    {
+        VAEncMiscParameterBuffer header;
+        VAEncMiscParameterRateControl rc;
+    } rc_param_data;
 };
 
 /*****************************************************************************/
@@ -97,20 +103,11 @@ va_inf_encoder_setup_buffers(struct va_inf_enc_priv *enc,
     unsigned int height_in_mbs;
     unsigned int padded_width;
     unsigned int padded_height;
-    unsigned int num_macroblocks;
     unsigned int codedbuf_size;
     unsigned int idr_period;
     uint64_t bitrate_calc;
     unsigned int bitrate;
     VAStatus va_status;
-    VAEncSequenceParameterBufferH264 seq;
-    VAEncPictureParameterBufferH264 pic;
-    VAEncSliceParameterBufferH264 slice;
-    struct _rc_param
-    {
-        VAEncMiscParameterBuffer header;
-        VAEncMiscParameterRateControl rc;
-    } rc_param;
 
     (void)flags;
     if ((width <= 0) || (height <= 0))
@@ -126,7 +123,6 @@ va_inf_encoder_setup_buffers(struct va_inf_enc_priv *enc,
     }
     padded_width = width_in_mbs * 16;
     padded_height = height_in_mbs * 16;
-    num_macroblocks = width_in_mbs * height_in_mbs;
     /* Use a 1024-frame GOP: I + 1023 P-frames. */
     idr_period = 1024;
 
@@ -166,116 +162,39 @@ va_inf_encoder_setup_buffers(struct va_inf_enc_priv *enc,
         return VI_ERROR_VACREATEBUFFER;
     }
 
-    memset(&seq, 0, sizeof(seq));
-    seq.intra_period = idr_period;
-    seq.intra_idr_period = idr_period;
-    seq.ip_period = 1;
-    seq.bits_per_second = bitrate;
-    seq.max_num_ref_frames = 1;
-    seq.picture_width_in_mbs = width_in_mbs;
-    seq.picture_height_in_mbs = height_in_mbs;
-    seq.level_idc = 41;
-    seq.seq_fields.bits.chroma_format_idc = 1;
-    seq.seq_fields.bits.frame_mbs_only_flag = 1;
-    seq.seq_fields.bits.direct_8x8_inference_flag = 1;
-    seq.seq_fields.bits.log2_max_frame_num_minus4 = 4;
-    seq.seq_fields.bits.pic_order_cnt_type = 0;
-    seq.seq_fields.bits.log2_max_pic_order_cnt_lsb_minus4 = 4;
-    seq.seq_fields.bits.delta_pic_order_always_zero_flag = 1;
-    seq.bit_depth_luma_minus8 = 0;
-    seq.bit_depth_chroma_minus8 = 0;
-    seq.vui_parameters_present_flag = 1;
-    seq.vui_fields.bits.aspect_ratio_info_present_flag = 1;
-    seq.vui_fields.bits.timing_info_present_flag = 1;
-    seq.vui_fields.bits.fixed_frame_rate_flag = 1;
-    seq.aspect_ratio_idc = 1;
-    seq.sar_width = 1;
-    seq.sar_height = 1;
-    seq.num_units_in_tick = 1;
-    seq.time_scale = frame_rate * 2;
+    /* Save sequence and rate control data for per-frame buffer creation.
+       VA-API buffers are consumed by vaRenderPicture, so they must be
+       recreated each frame. */
+    memset(&enc->seq_param_data, 0, sizeof(enc->seq_param_data));
+    enc->seq_param_data.intra_period = idr_period;
+    enc->seq_param_data.intra_idr_period = idr_period;
+    enc->seq_param_data.ip_period = 1;
+    enc->seq_param_data.bits_per_second = bitrate;
+    enc->seq_param_data.max_num_ref_frames = 1;
+    enc->seq_param_data.picture_width_in_mbs = width_in_mbs;
+    enc->seq_param_data.picture_height_in_mbs = height_in_mbs;
+    enc->seq_param_data.level_idc = 41;
+    enc->seq_param_data.seq_fields.bits.chroma_format_idc = 1;
+    enc->seq_param_data.seq_fields.bits.frame_mbs_only_flag = 1;
+    enc->seq_param_data.seq_fields.bits.direct_8x8_inference_flag = 1;
+    enc->seq_param_data.seq_fields.bits.log2_max_frame_num_minus4 = 4;
+    enc->seq_param_data.seq_fields.bits.pic_order_cnt_type = 0;
+    enc->seq_param_data.seq_fields.bits.log2_max_pic_order_cnt_lsb_minus4 = 4;
+    enc->seq_param_data.seq_fields.bits.delta_pic_order_always_zero_flag = 1;
+    enc->seq_param_data.vui_parameters_present_flag = 1;
+    enc->seq_param_data.vui_fields.bits.aspect_ratio_info_present_flag = 1;
+    enc->seq_param_data.vui_fields.bits.timing_info_present_flag = 1;
+    enc->seq_param_data.vui_fields.bits.fixed_frame_rate_flag = 1;
+    enc->seq_param_data.aspect_ratio_idc = 1;
+    enc->seq_param_data.sar_width = 1;
+    enc->seq_param_data.sar_height = 1;
+    enc->seq_param_data.num_units_in_tick = 1;
+    enc->seq_param_data.time_scale = frame_rate * 2;
 
-    va_status = vaCreateBuffer(g_va_display, enc->enc_context,
-            VAEncSequenceParameterBufferType, sizeof(seq), 1, &seq,
-            &enc->seq_param_buf);
-    if (va_status != VA_STATUS_SUCCESS)
-    {
-        va_inf_encoder_destroy_buffers(enc);
-        return VI_ERROR_VACREATEBUFFER;
-    }
-
-    memset(&pic, 0, sizeof(pic));
-    pic.CurrPic.picture_id = enc->va_surface[0];
-    pic.CurrPic.frame_idx = 0;
-    pic.CurrPic.flags = VA_PICTURE_H264_SHORT_TERM_REFERENCE;
-    va_inf_encoder_init_picture_list(pic.ReferenceFrames,
-            sizeof(pic.ReferenceFrames) / sizeof(pic.ReferenceFrames[0]));
-    pic.coded_buf = enc->coded_buf;
-    pic.pic_parameter_set_id = 0;
-    pic.seq_parameter_set_id = 0;
-    pic.frame_num = 0;
-    pic.pic_init_qp = 26;
-    pic.num_ref_idx_l0_active_minus1 = 0;
-    pic.num_ref_idx_l1_active_minus1 = 0;
-    pic.chroma_qp_index_offset = 0;
-    pic.second_chroma_qp_index_offset = 0;
-    pic.pic_fields.value = 0;
-    pic.pic_fields.bits.idr_pic_flag = 1;
-    pic.pic_fields.bits.reference_pic_flag = 1;
-    pic.pic_fields.bits.entropy_coding_mode_flag = 1;
-    pic.pic_fields.bits.deblocking_filter_control_present_flag = 1;
-    pic.pic_fields.bits.transform_8x8_mode_flag = 1;
-
-    va_status = vaCreateBuffer(g_va_display, enc->enc_context,
-            VAEncPictureParameterBufferType, sizeof(pic), 1, &pic,
-            &enc->pic_param_buf);
-    if (va_status != VA_STATUS_SUCCESS)
-    {
-        va_inf_encoder_destroy_buffers(enc);
-        return VI_ERROR_VACREATEBUFFER;
-    }
-
-    memset(&slice, 0, sizeof(slice));
-    slice.num_macroblocks = num_macroblocks;
-    slice.slice_type = VI_H264_SLICE_TYPE_I;
-    slice.pic_parameter_set_id = 0;
-    slice.idr_pic_id = 0;
-    slice.macroblock_info = VA_INVALID_ID;
-    slice.pic_order_cnt_lsb = 0;
-    va_inf_encoder_init_picture_list(slice.RefPicList0,
-            sizeof(slice.RefPicList0) / sizeof(slice.RefPicList0[0]));
-    va_inf_encoder_init_picture_list(slice.RefPicList1,
-            sizeof(slice.RefPicList1) / sizeof(slice.RefPicList1[0]));
-    slice.cabac_init_idc = 0;
-    slice.slice_qp_delta = 0;
-    slice.disable_deblocking_filter_idc = 0;
-
-    va_status = vaCreateBuffer(g_va_display, enc->enc_context,
-            VAEncSliceParameterBufferType, sizeof(slice), 1, &slice,
-            &enc->slice_param_buf);
-    if (va_status != VA_STATUS_SUCCESS)
-    {
-        va_inf_encoder_destroy_buffers(enc);
-        return VI_ERROR_VACREATEBUFFER;
-    }
-
-    memset(&rc_param, 0, sizeof(rc_param));
-    rc_param.header.type = VAEncMiscParameterTypeRateControl;
-    rc_param.rc.bits_per_second = 0;
-    rc_param.rc.target_percentage = 0;
-    rc_param.rc.window_size = 0;
-    rc_param.rc.initial_qp = 26;
-    rc_param.rc.min_qp = 0;
-    rc_param.rc.basic_unit_size = 0;
-    rc_param.rc.rc_flags.bits.disable_frame_skip = 1;
-
-    va_status = vaCreateBuffer(g_va_display, enc->enc_context,
-            VAEncMiscParameterBufferType, sizeof(rc_param), 1, &rc_param,
-            &enc->rc_param_buf);
-    if (va_status != VA_STATUS_SUCCESS)
-    {
-        va_inf_encoder_destroy_buffers(enc);
-        return VI_ERROR_VACREATEBUFFER;
-    }
+    memset(&enc->rc_param_data, 0, sizeof(enc->rc_param_data));
+    enc->rc_param_data.header.type = VAEncMiscParameterTypeRateControl;
+    enc->rc_param_data.rc.initial_qp = 26;
+    enc->rc_param_data.rc.rc_flags.bits.disable_frame_skip = 1;
 
     return VI_SUCCESS;
 }
@@ -715,8 +634,8 @@ va_inf_encoder_encode(void *obj, void *cdata, int *cdata_max_bytes, int flags)
     int height;
     int force_idr;
     void *buf_ptr;
-    VAEncPictureParameterBufferH264 *pic;
-    VAEncSliceParameterBufferH264 *slice;
+    VAEncPictureParameterBufferH264 pic;
+    VAEncSliceParameterBufferH264 slice;
     VABufferID buffers[4];
     unsigned int buffer_count;
     VACodedBufferSegment *segment;
@@ -770,74 +689,101 @@ va_inf_encoder_encode(void *obj, void *cdata, int *cdata_max_bytes, int flags)
     {
         force_idr = 1;
     }
-    va_status = vaMapBuffer(g_va_display, enc->pic_param_buf, &buf_ptr);
-    if (va_status != VA_STATUS_SUCCESS)
-    {
-        return VI_ERROR_VAMAPBUFFER;
-    }
-    pic = (VAEncPictureParameterBufferH264 *) buf_ptr;
-    pic->CurrPic.picture_id = enc->enc_surface;
-    pic->CurrPic.frame_idx = enc->frame_num;
-    pic->CurrPic.flags = VA_PICTURE_H264_SHORT_TERM_REFERENCE;
-    pic->CurrPic.TopFieldOrderCnt = enc->frame_num * 2;
-    pic->CurrPic.BottomFieldOrderCnt = enc->frame_num * 2;
-    pic->frame_num = enc->frame_num;
-    pic->pic_fields.bits.idr_pic_flag = force_idr ? 1 : 0;
-    pic->pic_fields.bits.reference_pic_flag = 1;
-
-    /* Set up reference frames for P-frames */
+    /* Build picture parameters on the stack and create a fresh buffer.
+       VA-API buffers are consumed by vaRenderPicture, so they must be
+       recreated each frame for drivers that follow the spec (e.g. r600). */
+    memset(&pic, 0, sizeof(pic));
+    pic.CurrPic.picture_id = enc->enc_surface;
+    pic.CurrPic.frame_idx = enc->frame_num;
+    pic.CurrPic.flags = VA_PICTURE_H264_SHORT_TERM_REFERENCE;
+    pic.CurrPic.TopFieldOrderCnt = enc->frame_num * 2;
+    pic.CurrPic.BottomFieldOrderCnt = enc->frame_num * 2;
+    va_inf_encoder_init_picture_list(pic.ReferenceFrames,
+            sizeof(pic.ReferenceFrames) / sizeof(pic.ReferenceFrames[0]));
+    pic.coded_buf = enc->coded_buf;
+    pic.frame_num = enc->frame_num;
+    pic.pic_init_qp = 26;
+    pic.pic_fields.bits.idr_pic_flag = force_idr ? 1 : 0;
+    pic.pic_fields.bits.reference_pic_flag = 1;
+    pic.pic_fields.bits.entropy_coding_mode_flag = 1;
+    pic.pic_fields.bits.deblocking_filter_control_present_flag = 1;
+    pic.pic_fields.bits.transform_8x8_mode_flag = 1;
     if (!force_idr && enc->ref_surface_id != VA_INVALID_SURFACE)
     {
-        pic->ReferenceFrames[0].picture_id = enc->ref_surface_id;
-        pic->ReferenceFrames[0].frame_idx = enc->ref_frame_idx;
-        pic->ReferenceFrames[0].flags = VA_PICTURE_H264_SHORT_TERM_REFERENCE;
-        pic->ReferenceFrames[0].TopFieldOrderCnt = enc->ref_poc;
-        pic->ReferenceFrames[0].BottomFieldOrderCnt = enc->ref_poc;
+        pic.ReferenceFrames[0].picture_id = enc->ref_surface_id;
+        pic.ReferenceFrames[0].frame_idx = enc->ref_frame_idx;
+        pic.ReferenceFrames[0].flags = VA_PICTURE_H264_SHORT_TERM_REFERENCE;
+        pic.ReferenceFrames[0].TopFieldOrderCnt = enc->ref_poc;
+        pic.ReferenceFrames[0].BottomFieldOrderCnt = enc->ref_poc;
     }
-    else
+    if (enc->pic_param_buf != VA_INVALID_ID)
     {
-        va_inf_encoder_init_picture_list(pic->ReferenceFrames,
-                sizeof(pic->ReferenceFrames) / sizeof(pic->ReferenceFrames[0]));
+        vaDestroyBuffer(g_va_display, enc->pic_param_buf);
     }
-
-    va_status = vaUnmapBuffer(g_va_display, enc->pic_param_buf);
+    va_status = vaCreateBuffer(g_va_display, enc->enc_context,
+            VAEncPictureParameterBufferType, sizeof(pic), 1, &pic,
+            &enc->pic_param_buf);
     if (va_status != VA_STATUS_SUCCESS)
     {
-        return VI_ERROR_VAUNMAPBUFFER;
+        enc->pic_param_buf = VA_INVALID_ID;
+        return VI_ERROR_VACREATEBUFFER;
     }
-    va_status = vaMapBuffer(g_va_display, enc->slice_param_buf, &buf_ptr);
-    if (va_status != VA_STATUS_SUCCESS)
-    {
-        return VI_ERROR_VAMAPBUFFER;
-    }
-    slice = (VAEncSliceParameterBufferH264*)buf_ptr;
-    slice->macroblock_address = 0;
-    slice->num_macroblocks = enc->width_in_mbs * enc->height_in_mbs;
-    /* Only advertise I/P slices so the driver never generates B frames. */
-    slice->slice_type = force_idr ? VI_H264_SLICE_TYPE_I :
+    memset(&slice, 0, sizeof(slice));
+    slice.num_macroblocks = enc->width_in_mbs * enc->height_in_mbs;
+    slice.slice_type = force_idr ? VI_H264_SLICE_TYPE_I :
             VI_H264_SLICE_TYPE_P;
-    slice->idr_pic_id = enc->frame_num & 0xFFFFU;
-    slice->pic_order_cnt_lsb = (enc->frame_num * 2) & 0xFFFF;
-
-    /* Set up reference list for P-frame slices */
+    slice.idr_pic_id = enc->frame_num & 0xFFFFU;
+    slice.macroblock_info = VA_INVALID_ID;
+    slice.pic_order_cnt_lsb = (enc->frame_num * 2) & 0xFFFF;
+    va_inf_encoder_init_picture_list(slice.RefPicList0,
+            sizeof(slice.RefPicList0) / sizeof(slice.RefPicList0[0]));
+    va_inf_encoder_init_picture_list(slice.RefPicList1,
+            sizeof(slice.RefPicList1) / sizeof(slice.RefPicList1[0]));
     if (!force_idr && enc->ref_surface_id != VA_INVALID_SURFACE)
     {
-        slice->RefPicList0[0].picture_id = enc->ref_surface_id;
-        slice->RefPicList0[0].frame_idx = enc->ref_frame_idx;
-        slice->RefPicList0[0].flags = VA_PICTURE_H264_SHORT_TERM_REFERENCE;
-        slice->RefPicList0[0].TopFieldOrderCnt = enc->ref_poc;
-        slice->RefPicList0[0].BottomFieldOrderCnt = enc->ref_poc;
+        slice.RefPicList0[0].picture_id = enc->ref_surface_id;
+        slice.RefPicList0[0].frame_idx = enc->ref_frame_idx;
+        slice.RefPicList0[0].flags = VA_PICTURE_H264_SHORT_TERM_REFERENCE;
+        slice.RefPicList0[0].TopFieldOrderCnt = enc->ref_poc;
+        slice.RefPicList0[0].BottomFieldOrderCnt = enc->ref_poc;
     }
-    else
+    if (enc->slice_param_buf != VA_INVALID_ID)
     {
-        va_inf_encoder_init_picture_list(slice->RefPicList0,
-                sizeof(slice->RefPicList0) / sizeof(slice->RefPicList0[0]));
+        vaDestroyBuffer(g_va_display, enc->slice_param_buf);
     }
-
-    va_status = vaUnmapBuffer(g_va_display, enc->slice_param_buf);
+    va_status = vaCreateBuffer(g_va_display, enc->enc_context,
+            VAEncSliceParameterBufferType, sizeof(slice), 1, &slice,
+            &enc->slice_param_buf);
     if (va_status != VA_STATUS_SUCCESS)
     {
-        return VI_ERROR_VAUNMAPBUFFER;
+        enc->slice_param_buf = VA_INVALID_ID;
+        return VI_ERROR_VACREATEBUFFER;
+    }
+    if (enc->seq_param_buf != VA_INVALID_ID)
+    {
+        vaDestroyBuffer(g_va_display, enc->seq_param_buf);
+    }
+    va_status = vaCreateBuffer(g_va_display, enc->enc_context,
+            VAEncSequenceParameterBufferType,
+            sizeof(enc->seq_param_data), 1, &enc->seq_param_data,
+            &enc->seq_param_buf);
+    if (va_status != VA_STATUS_SUCCESS)
+    {
+        enc->seq_param_buf = VA_INVALID_ID;
+        return VI_ERROR_VACREATEBUFFER;
+    }
+    if (enc->rc_param_buf != VA_INVALID_ID)
+    {
+        vaDestroyBuffer(g_va_display, enc->rc_param_buf);
+    }
+    va_status = vaCreateBuffer(g_va_display, enc->enc_context,
+            VAEncMiscParameterBufferType,
+            sizeof(enc->rc_param_data), 1, &enc->rc_param_data,
+            &enc->rc_param_buf);
+    if (va_status != VA_STATUS_SUCCESS)
+    {
+        enc->rc_param_buf = VA_INVALID_ID;
+        return VI_ERROR_VACREATEBUFFER;
     }
     va_status = vaBeginPicture(g_va_display, enc->enc_context,
             enc->enc_surface);
@@ -846,31 +792,16 @@ va_inf_encoder_encode(void *obj, void *cdata, int *cdata_max_bytes, int flags)
         return VI_ERROR_VABEGINPICTURE;
     }
     buffer_count = 0;
-    if (enc->seq_param_buf != VA_INVALID_ID)
+    buffers[buffer_count++] = enc->seq_param_buf;
+    buffers[buffer_count++] = enc->rc_param_buf;
+    buffers[buffer_count++] = enc->pic_param_buf;
+    buffers[buffer_count++] = enc->slice_param_buf;
+    va_status = vaRenderPicture(g_va_display, enc->enc_context,
+            buffers, buffer_count);
+    if (va_status != VA_STATUS_SUCCESS)
     {
-        buffers[buffer_count++] = enc->seq_param_buf;
-    }
-    if (enc->rc_param_buf != VA_INVALID_ID)
-    {
-        buffers[buffer_count++] = enc->rc_param_buf;
-    }
-    if (enc->pic_param_buf != VA_INVALID_ID)
-    {
-        buffers[buffer_count++] = enc->pic_param_buf;
-    }
-    if (enc->slice_param_buf != VA_INVALID_ID)
-    {
-        buffers[buffer_count++] = enc->slice_param_buf;
-    }
-    if (buffer_count > 0)
-    {
-        va_status = vaRenderPicture(g_va_display, enc->enc_context,
-                buffers, buffer_count);
-        if (va_status != VA_STATUS_SUCCESS)
-        {
-            vaEndPicture(g_va_display, enc->enc_context);
-            return VI_ERROR_VARENDERPICTURE;
-        }
+        vaEndPicture(g_va_display, enc->enc_context);
+        return VI_ERROR_VARENDERPICTURE;
     }
     va_status = vaEndPicture(g_va_display, enc->enc_context);
     if (va_status != VA_STATUS_SUCCESS)
