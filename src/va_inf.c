@@ -53,6 +53,7 @@ struct va_inf_enc_priv
         VAEncMiscParameterBuffer header;
         VAEncMiscParameterRateControl rc;
     } rc_param_data;
+    unsigned char sps_pps[512];
 };
 
 /*****************************************************************************/
@@ -624,6 +625,296 @@ va_inf_encoder_set_fd_src(void *obj, int fd, int fd_width, int fd_height,
     return VI_SUCCESS;
 }
 
+/* Bitstream writer for SPS/PPS generation */
+struct vi_bitstream
+{
+    unsigned char *buf;
+    int bit_pos;
+    int max_bytes;
+};
+
+/*****************************************************************************/
+static void
+vi_bs_init(struct vi_bitstream *bs, unsigned char *buf, int max_bytes)
+{
+    memset(buf, 0, max_bytes);
+    bs->buf = buf;
+    bs->bit_pos = 0;
+    bs->max_bytes = max_bytes;
+}
+
+/*****************************************************************************/
+static void
+vi_bs_put_bits(struct vi_bitstream *bs, int n, unsigned int val)
+{
+    int i;
+
+    for (i = n - 1; i >= 0; i--)
+    {
+        int byte_pos = bs->bit_pos >> 3;
+        int bit_offset = 7 - (bs->bit_pos & 7);
+        if (byte_pos < bs->max_bytes)
+        {
+            bs->buf[byte_pos] |=
+                    (unsigned char)(((val >> i) & 1) << bit_offset);
+        }
+        bs->bit_pos++;
+    }
+}
+
+/*****************************************************************************/
+static void
+vi_bs_put_ue(struct vi_bitstream *bs, unsigned int val)
+{
+    unsigned int v;
+    unsigned int tmp;
+    int n;
+
+    v = val + 1;
+    n = 0;
+    tmp = v;
+    while (tmp > 1)
+    {
+        tmp >>= 1;
+        n++;
+    }
+    vi_bs_put_bits(bs, n, 0);
+    vi_bs_put_bits(bs, n + 1, v);
+}
+
+/*****************************************************************************/
+static void
+vi_bs_put_se(struct vi_bitstream *bs, int val)
+{
+    unsigned int mapped;
+
+    if (val > 0)
+    {
+        mapped = (unsigned int)(val * 2 - 1);
+    }
+    else
+    {
+        mapped = (unsigned int)(-val * 2);
+    }
+    vi_bs_put_ue(bs, mapped);
+}
+
+/*****************************************************************************/
+static void
+vi_bs_trailing_bits(struct vi_bitstream *bs)
+{
+    vi_bs_put_bits(bs, 1, 1);
+    while ((bs->bit_pos & 7) != 0)
+    {
+        vi_bs_put_bits(bs, 1, 0);
+    }
+}
+
+/*****************************************************************************/
+/* Write RBSP to output with start code and emulation prevention */
+static int
+vi_write_nal(const unsigned char *rbsp, int rbsp_size,
+             unsigned char *out, int out_max)
+{
+    int i;
+    int pos;
+    int zero_count;
+
+    if (out_max < 4 + rbsp_size)
+    {
+        return 0;
+    }
+    pos = 0;
+    out[pos++] = 0x00;
+    out[pos++] = 0x00;
+    out[pos++] = 0x00;
+    out[pos++] = 0x01;
+    zero_count = 0;
+    for (i = 0; i < rbsp_size && pos < out_max; i++)
+    {
+        if (zero_count == 2 && rbsp[i] <= 3)
+        {
+            if (pos >= out_max)
+            {
+                break;
+            }
+            out[pos++] = 0x03;
+            zero_count = 0;
+        }
+        if (pos >= out_max)
+        {
+            break;
+        }
+        out[pos++] = rbsp[i];
+        if (rbsp[i] == 0)
+        {
+            zero_count++;
+        }
+        else
+        {
+            zero_count = 0;
+        }
+    }
+    return pos;
+}
+
+/*****************************************************************************/
+static int
+va_inf_encoder_generate_sps(struct va_inf_enc_priv *enc,
+                            unsigned char *buf, int max_bytes)
+{
+    struct vi_bitstream bs;
+    unsigned char rbsp[256];
+    unsigned int profile_idc;
+    int constraint_set1_flag;
+    int crop_right;
+    int crop_bottom;
+
+    /* Always signal Baseline in SPS so decoders like OpenH264
+       output frames immediately without buffering */
+    profile_idc = 66;
+    constraint_set1_flag = 1;
+
+    vi_bs_init(&bs, rbsp, sizeof(rbsp));
+    /* NAL header: nal_ref_idc=3, nal_unit_type=7 (SPS) */
+    vi_bs_put_bits(&bs, 8, 0x67);
+    vi_bs_put_bits(&bs, 8, profile_idc);
+    vi_bs_put_bits(&bs, 1, 0);                 /* constraint_set0_flag */
+    vi_bs_put_bits(&bs, 1, constraint_set1_flag);
+    vi_bs_put_bits(&bs, 1, 0);                 /* constraint_set2_flag */
+    vi_bs_put_bits(&bs, 1, 0);                 /* constraint_set3_flag */
+    vi_bs_put_bits(&bs, 1, 0);                 /* constraint_set4_flag */
+    vi_bs_put_bits(&bs, 1, 0);                 /* constraint_set5_flag */
+    vi_bs_put_bits(&bs, 2, 0);                 /* reserved_zero_2bits */
+    vi_bs_put_bits(&bs, 8, enc->seq_param_data.level_idc);
+    vi_bs_put_ue(&bs, 0);                      /* seq_parameter_set_id */
+    if (profile_idc == 100)
+    {
+        vi_bs_put_ue(&bs, 1);                  /* chroma_format_idc */
+        vi_bs_put_ue(&bs, 0);                  /* bit_depth_luma_minus8 */
+        vi_bs_put_ue(&bs, 0);                  /* bit_depth_chroma_minus8 */
+        vi_bs_put_bits(&bs, 1, 0);             /* qpprime_y_zero_transform_bypass */
+        vi_bs_put_bits(&bs, 1, 0);             /* seq_scaling_matrix_present */
+    }
+    vi_bs_put_ue(&bs, enc->seq_param_data.seq_fields.bits.log2_max_frame_num_minus4);
+    vi_bs_put_ue(&bs, enc->seq_param_data.seq_fields.bits.pic_order_cnt_type);
+    if (enc->seq_param_data.seq_fields.bits.pic_order_cnt_type == 0)
+    {
+        vi_bs_put_ue(&bs, enc->seq_param_data.seq_fields.bits.log2_max_pic_order_cnt_lsb_minus4);
+    }
+    vi_bs_put_ue(&bs, enc->seq_param_data.max_num_ref_frames);
+    vi_bs_put_bits(&bs, 1, 0);                 /* gaps_in_frame_num_allowed */
+    vi_bs_put_ue(&bs, enc->seq_param_data.picture_width_in_mbs - 1);
+    vi_bs_put_ue(&bs, enc->seq_param_data.picture_height_in_mbs - 1);
+    vi_bs_put_bits(&bs, 1, enc->seq_param_data.seq_fields.bits.frame_mbs_only_flag);
+    if (!enc->seq_param_data.seq_fields.bits.frame_mbs_only_flag)
+    {
+        vi_bs_put_bits(&bs, 1, 0);             /* mb_adaptive_frame_field */
+    }
+    vi_bs_put_bits(&bs, 1, enc->seq_param_data.seq_fields.bits.direct_8x8_inference_flag);
+    crop_right = (int)(enc->width_in_mbs * 16) - enc->width;
+    crop_bottom = (int)(enc->height_in_mbs * 16) - enc->height;
+    if (crop_right > 0 || crop_bottom > 0)
+    {
+        vi_bs_put_bits(&bs, 1, 1);             /* frame_cropping_flag */
+        vi_bs_put_ue(&bs, 0);                  /* crop_left */
+        vi_bs_put_ue(&bs, (unsigned int)crop_right / 2);
+        vi_bs_put_ue(&bs, 0);                  /* crop_top */
+        vi_bs_put_ue(&bs, (unsigned int)crop_bottom / 2);
+    }
+    else
+    {
+        vi_bs_put_bits(&bs, 1, 0);             /* frame_cropping_flag */
+    }
+    vi_bs_put_bits(&bs, 1, enc->seq_param_data.vui_parameters_present_flag);
+    if (enc->seq_param_data.vui_parameters_present_flag)
+    {
+        vi_bs_put_bits(&bs, 1, enc->seq_param_data.vui_fields.bits.aspect_ratio_info_present_flag);
+        if (enc->seq_param_data.vui_fields.bits.aspect_ratio_info_present_flag)
+        {
+            vi_bs_put_bits(&bs, 8, enc->seq_param_data.aspect_ratio_idc);
+            if (enc->seq_param_data.aspect_ratio_idc == 255)
+            {
+                vi_bs_put_bits(&bs, 16, enc->seq_param_data.sar_width);
+                vi_bs_put_bits(&bs, 16, enc->seq_param_data.sar_height);
+            }
+        }
+        vi_bs_put_bits(&bs, 1, 0);             /* overscan_info_present */
+        vi_bs_put_bits(&bs, 1, 0);             /* video_signal_type_present */
+        vi_bs_put_bits(&bs, 1, 0);             /* chroma_loc_info_present */
+        vi_bs_put_bits(&bs, 1, enc->seq_param_data.vui_fields.bits.timing_info_present_flag);
+        if (enc->seq_param_data.vui_fields.bits.timing_info_present_flag)
+        {
+            vi_bs_put_bits(&bs, 32, enc->seq_param_data.num_units_in_tick);
+            vi_bs_put_bits(&bs, 32, enc->seq_param_data.time_scale);
+            vi_bs_put_bits(&bs, 1, enc->seq_param_data.vui_fields.bits.fixed_frame_rate_flag);
+        }
+        vi_bs_put_bits(&bs, 1, 0);             /* nal_hrd_parameters_present */
+        vi_bs_put_bits(&bs, 1, 0);             /* vcl_hrd_parameters_present */
+        vi_bs_put_bits(&bs, 1, 0);             /* pic_struct_present */
+        vi_bs_put_bits(&bs, 1, 1);             /* bitstream_restriction */
+        vi_bs_put_bits(&bs, 1, 1);             /* motion_vectors_over_pic_boundaries */
+        vi_bs_put_ue(&bs, 0);                  /* max_bytes_per_pic_denom */
+        vi_bs_put_ue(&bs, 0);                  /* max_bits_per_mb_denom */
+        vi_bs_put_ue(&bs, 16);                 /* log2_max_mv_length_horizontal */
+        vi_bs_put_ue(&bs, 16);                 /* log2_max_mv_length_vertical */
+        vi_bs_put_ue(&bs, 0);                  /* max_num_reorder_frames */
+        vi_bs_put_ue(&bs, 1);                  /* max_dec_frame_buffering */
+    }
+    vi_bs_trailing_bits(&bs);
+    return vi_write_nal(rbsp, (bs.bit_pos + 7) >> 3, buf, max_bytes);
+}
+
+/*****************************************************************************/
+static int
+va_inf_encoder_generate_pps(struct va_inf_enc_priv *enc,
+                            unsigned char *buf, int max_bytes)
+{
+    struct vi_bitstream bs;
+    unsigned char rbsp[64];
+    unsigned int profile_idc;
+
+    switch (enc->flags & VI_H264_ENC_FLAGS_PROFILE_MASK)
+    {
+        case VI_H264_ENC_FLAGS_PROFILE_MAIN:
+            profile_idc = 77;
+            break;
+        case VI_H264_ENC_FLAGS_PROFILE_HIGH:
+            profile_idc = 100;
+            break;
+        default:
+            profile_idc = 66;
+            break;
+    }
+
+    vi_bs_init(&bs, rbsp, sizeof(rbsp));
+    /* NAL header: nal_ref_idc=3, nal_unit_type=8 (PPS) */
+    vi_bs_put_bits(&bs, 8, 0x68);
+    vi_bs_put_ue(&bs, 0);                      /* pic_parameter_set_id */
+    vi_bs_put_ue(&bs, 0);                      /* seq_parameter_set_id */
+    vi_bs_put_bits(&bs, 1, (profile_idc != 66) ? 1 : 0); /* entropy_coding_mode */
+    vi_bs_put_bits(&bs, 1, 0);                 /* bottom_field_pic_order_in_frame */
+    vi_bs_put_ue(&bs, 0);                      /* num_slice_groups_minus1 */
+    vi_bs_put_ue(&bs, 0);                      /* num_ref_idx_l0_default_active_minus1 */
+    vi_bs_put_ue(&bs, 0);                      /* num_ref_idx_l1_default_active_minus1 */
+    vi_bs_put_bits(&bs, 1, 0);                 /* weighted_pred_flag */
+    vi_bs_put_bits(&bs, 2, 0);                 /* weighted_bipred_idc */
+    vi_bs_put_se(&bs, 0);                      /* pic_init_qp_minus26 */
+    vi_bs_put_se(&bs, 0);                      /* pic_init_qs_minus26 */
+    vi_bs_put_se(&bs, 0);                      /* chroma_qp_index_offset */
+    vi_bs_put_bits(&bs, 1, 1);                 /* deblocking_filter_control_present */
+    vi_bs_put_bits(&bs, 1, 0);                 /* constrained_intra_pred */
+    vi_bs_put_bits(&bs, 1, 0);                 /* redundant_pic_cnt_present */
+    if (profile_idc == 100)
+    {
+        vi_bs_put_bits(&bs, 1, 1);             /* transform_8x8_mode_flag */
+        vi_bs_put_bits(&bs, 1, 0);             /* pic_scaling_matrix_present */
+        vi_bs_put_se(&bs, 0);                  /* second_chroma_qp_index_offset */
+    }
+    vi_bs_trailing_bits(&bs);
+    return vi_write_nal(rbsp, (bs.bit_pos + 7) >> 3, buf, max_bytes);
+}
+
 /*****************************************************************************/
 static int
 va_inf_encoder_encode(void *obj, void *cdata, int *cdata_max_bytes, int flags)
@@ -689,6 +980,10 @@ va_inf_encoder_encode(void *obj, void *cdata, int *cdata_max_bytes, int flags)
     {
         force_idr = 1;
     }
+    if (force_idr)
+    {
+        enc->frame_num = 0;
+    }
     /* Build picture parameters on the stack and create a fresh buffer.
        VA-API buffers are consumed by vaRenderPicture, so they must be
        recreated each frame for drivers that follow the spec (e.g. r600). */
@@ -705,9 +1000,22 @@ va_inf_encoder_encode(void *obj, void *cdata, int *cdata_max_bytes, int flags)
     pic.pic_init_qp = 26;
     pic.pic_fields.bits.idr_pic_flag = force_idr ? 1 : 0;
     pic.pic_fields.bits.reference_pic_flag = 1;
-    pic.pic_fields.bits.entropy_coding_mode_flag = 1;
+    switch (enc->flags & VI_H264_ENC_FLAGS_PROFILE_MASK)
+    {
+        case VI_H264_ENC_FLAGS_PROFILE_HIGH:
+            pic.pic_fields.bits.entropy_coding_mode_flag = 1;
+            pic.pic_fields.bits.transform_8x8_mode_flag = 1;
+            break;
+        case VI_H264_ENC_FLAGS_PROFILE_MAIN:
+            pic.pic_fields.bits.entropy_coding_mode_flag = 1;
+            pic.pic_fields.bits.transform_8x8_mode_flag = 0;
+            break;
+        default: /* Constrained Baseline */
+            pic.pic_fields.bits.entropy_coding_mode_flag = 0;
+            pic.pic_fields.bits.transform_8x8_mode_flag = 0;
+            break;
+    }
     pic.pic_fields.bits.deblocking_filter_control_present_flag = 1;
-    pic.pic_fields.bits.transform_8x8_mode_flag = 1;
     if (!force_idr && enc->ref_surface_id != VA_INVALID_SURFACE)
     {
         pic.ReferenceFrames[0].picture_id = enc->ref_surface_id;
@@ -832,6 +1140,26 @@ va_inf_encoder_encode(void *obj, void *cdata, int *cdata_max_bytes, int flags)
     if (va_status != VA_STATUS_SUCCESS)
     {
         return VI_ERROR_VAUNMAPBUFFER;
+    }
+    /* Prepend SPS and PPS before IDR frames */
+    if (force_idr)
+    {
+        int sps_size;
+        int pps_size;
+        int sps_pps_size;
+
+        sps_size = va_inf_encoder_generate_sps(enc, enc->sps_pps,
+                sizeof(enc->sps_pps));
+        pps_size = va_inf_encoder_generate_pps(enc, enc->sps_pps + sps_size,
+                (int)sizeof(enc->sps_pps) - sps_size);
+        sps_pps_size = sps_size + pps_size;
+        if (sps_pps_size > 0 &&
+                bytes_written + (unsigned int)sps_pps_size <= dst_size)
+        {
+            memmove(dst + sps_pps_size, dst, bytes_written);
+            memcpy(dst, enc->sps_pps, sps_pps_size);
+            bytes_written += (unsigned int)sps_pps_size;
+        }
     }
     *cdata_max_bytes = (int)bytes_written;
 

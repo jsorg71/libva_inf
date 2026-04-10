@@ -6,31 +6,27 @@
 #include <unistd.h>
 #include <va_inf.h>
 
-struct beef_t
-{
-    char text[4];
-    int width;
-    int height;
-    int bytes_after;
-};
+#include <wels/codec_api.h>
 
-/******************************************************************************/
-static int
-save_data(int fd, const char *cdata, int cdata_bytes, struct beef_t *beef)
+int
+decode_single_frame(ISVCDecoder* oh264Decoder, unsigned char *cdata,
+        int cdata_bytes, unsigned char **targetBuffer,
+        SBufferInfo *targetInfo)
 {
     int error;
-    int llen;
 
-    beef->bytes_after = cdata_bytes;
-    llen = sizeof(struct beef_t);
-    error = write(fd, beef, llen);
-    printf("save_data: write rv %d\n", error);
-    if (error != llen) return 1;
-    llen = cdata_bytes;
-    error = write(fd, cdata, llen);
-    printf("save_data: write rv %d\n", error);
-    if (error != llen) return 1;
-    return 0;
+    error = (*oh264Decoder)->DecodeFrameNoDelay(oh264Decoder, cdata,
+            cdata_bytes, targetBuffer, targetInfo);
+    printf("decode_single_frame: DecodeFrameNoDelay error %d\n", error);
+    if (error == 0)
+    {
+        printf("main: iBufferStatus %d\n", targetInfo->iBufferStatus);
+    }
+    if ((error == 0) && (targetInfo->iBufferStatus == 1))
+    {
+        return 0;
+    }
+    return 1;
 }
 
 int
@@ -43,16 +39,32 @@ main(int argc, char **argv)
     int ydata_stride_bytes;
     int uvdata_stride_bytes;
     VI_UINTPTR fd;
-    char *cdata;
+    unsigned char *cdata;
     void *ydata;
     void *uvdata;
     int rfd;
     int wfd;
     int flags;
-    struct beef_t beef;
+    ISVCDecoder* oh264Decoder;
+    SDecodingParam oh264DecoderParam;
+    SBufferInfo targetInfo;
+    unsigned char *targetBuffer[3];
+    unsigned char **targetBuffer1;
 
     (void)argc;
     (void)argv;
+
+    targetBuffer1 = (unsigned char **) (&targetBuffer);
+
+    error = WelsCreateDecoder(&oh264Decoder);
+    printf("main: WelsCreateDecoder error %d\n", error);
+
+    memset(&oh264DecoderParam, 0, sizeof(SDecodingParam));
+    oh264DecoderParam.uiTargetDqLayer = 255;
+    oh264DecoderParam.eEcActiveIdc = ERROR_CON_DISABLE;
+    oh264DecoderParam.sVideoProperty.size = sizeof(oh264DecoderParam.sVideoProperty);
+    oh264DecoderParam.sVideoProperty.eVideoBsType = VIDEO_BITSTREAM_AVC;
+    error = (*oh264Decoder)->Initialize(oh264Decoder, &oh264DecoderParam);
 
     error = va_inf_get_funcs(&fns, VI_VERSION_INT(VI_MAJOR, VI_MINOR));
     printf("main: va_inf_get_funcs rv %d\n", error);
@@ -61,12 +73,12 @@ main(int argc, char **argv)
         int version;
         error = fns.get_version(&version);
         printf("main: get_version rv %d version 0x%8.8X\n", error, version);
-     
+
         fd = open("/dev/dri/renderD128", O_RDWR);
         printf("main: open fd %ld\n", fd);
         rfd = open("test_nv12_640x480.yuv", O_RDONLY);
         printf("main: open rfd %d\n", rfd);
-        wfd = open("out.beef", O_CREAT | O_TRUNC | O_WRONLY, S_IRUSR | S_IWUSR);
+        wfd = open("out.h264", O_CREAT | O_TRUNC | O_WRONLY, S_IRUSR | S_IWUSR);
         printf("main: open wfd %d\n", wfd);
         void *enc = NULL;
         error = fns.init(VI_TYPE_DRM, (void*)fd);
@@ -78,18 +90,11 @@ main(int argc, char **argv)
         if (error == VI_SUCCESS)
         {
             cdata_bytes = 1024 * 1024;
-            cdata = (char*)malloc(1024 * 1024);
+            cdata = (unsigned char*)malloc(1024 * 1024);
             if (cdata == NULL) return 1;
 
-            beef.text[0] = 'B';
-            beef.text[1] = 'E';
-            beef.text[2] = 'E';
-            beef.text[3] = 'F';
-            beef.width = 640;
-            beef.height = 480;
-
             flags = 0;
-            //flags |= VI_H264_ENC_FLAG_KEYFRAME;
+            flags |= VI_H264_ENC_FLAG_KEYFRAME;
 
             // frame 1
             error = fns.encoder_get_ybuffer(enc, &ydata, &ydata_stride_bytes);
@@ -109,8 +114,9 @@ main(int argc, char **argv)
             error = fns.encoder_encode(enc, cdata, &cdata_bytes, flags);
             printf("main: encoder_encode rv %d cdata_bytes %d\n", error, cdata_bytes);
             if (error != 0) return 1;
-            error = save_data(wfd, cdata, cdata_bytes, &beef);
-            if (error != 0) return 1;
+            error = decode_single_frame(oh264Decoder, cdata, cdata_bytes, targetBuffer1, &targetInfo);
+            printf("main: decode_single_frame rv %d\n", error);
+            printf("\n");
 
             // frame 2
             error = fns.encoder_get_ybuffer(enc, &ydata, &ydata_stride_bytes);
@@ -131,8 +137,9 @@ main(int argc, char **argv)
             error = fns.encoder_encode(enc, cdata, &cdata_bytes, flags);
             printf("main: encoder_encode rv %d cdata_bytes %d\n", error, cdata_bytes);
             if (error != 0) return 1;
-            error = save_data(wfd, cdata, cdata_bytes, &beef);
-            if (error != 0) return 1;
+            error = decode_single_frame(oh264Decoder, cdata, cdata_bytes, targetBuffer1, &targetInfo);
+            printf("main: decode_single_frame rv %d\n", error);
+            printf("\n");
 
             // frame 3
             error = fns.encoder_get_ybuffer(enc, &ydata, &ydata_stride_bytes);
@@ -149,8 +156,9 @@ main(int argc, char **argv)
             error = fns.encoder_encode(enc, cdata, &cdata_bytes, flags);
             printf("main: encoder_encode rv %d cdata_bytes %d\n", error, cdata_bytes);
             if (error != 0) return 1;
-            error = save_data(wfd, cdata, cdata_bytes, &beef);
-            if (error != 0) return 1;
+            error = decode_single_frame(oh264Decoder, cdata, cdata_bytes, targetBuffer1, &targetInfo);
+            printf("main: decode_single_frame rv %d\n", error);
+            printf("\n");
 
             // frame 4
             error = fns.encoder_get_ybuffer(enc, &ydata, &ydata_stride_bytes);
@@ -167,8 +175,9 @@ main(int argc, char **argv)
             error = fns.encoder_encode(enc, cdata, &cdata_bytes, flags);
             printf("main: encoder_encode rv %d cdata_bytes %d\n", error, cdata_bytes);
             if (error != 0) return 1;
-            error = save_data(wfd, cdata, cdata_bytes, &beef);
-            if (error != 0) return 1;
+            error = decode_single_frame(oh264Decoder, cdata, cdata_bytes, targetBuffer1, &targetInfo);
+            printf("main: decode_single_frame rv %d\n", error);
+            printf("\n");
 
             free(cdata);
         }
