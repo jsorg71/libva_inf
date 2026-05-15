@@ -36,7 +36,7 @@ save_data(int fd, const char *cdata, int cdata_bytes, struct beef_t *beef)
 int
 main(int argc, char **argv)
 {
-    struct va_funcs fns;
+    struct va_inf_funcs fns;
     int llen;
     int error;
     int cdata_bytes;
@@ -77,7 +77,6 @@ main(int argc, char **argv)
 
         if (error == VI_SUCCESS)
         {
-            cdata_bytes = 1024 * 1024;
             cdata = (char*)malloc(1024 * 1024);
             if (cdata == NULL) return 1;
 
@@ -106,6 +105,7 @@ main(int argc, char **argv)
             error = read(rfd, uvdata, llen);
             printf("main: read rv %d\n", error);
             if (error != llen) return 1;
+            cdata_bytes = 1024 * 1024;
             error = fns.encoder_encode(enc, cdata, &cdata_bytes, flags);
             printf("main: encoder_encode rv %d cdata_bytes %d\n", error, cdata_bytes);
             if (error != 0) return 1;

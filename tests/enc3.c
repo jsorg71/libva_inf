@@ -114,8 +114,8 @@ main(int argc, char **argv)
         void *enc = NULL;
         error = fns.yami_init(YI_TYPE_DRM, (void*)(long)fd);
         //error = fns.yami_encoder_create(&enc, 640, 480, YI_TYPE_H264, 0);
-        //error = fns.yami_encoder_create(&enc, 640, 480, YI_TYPE_H264, YI_H264_ENC_FLAGS_PROFILE_MAIN);
-        error = fns.yami_encoder_create(&enc, 640, 480, YI_TYPE_H264, YI_H264_ENC_FLAGS_PROFILE_HIGH);
+        error = fns.yami_encoder_create(&enc, 640, 480, YI_TYPE_H264, YI_H264_ENC_FLAGS_PROFILE_MAIN);
+        //error = fns.yami_encoder_create(&enc, 640, 480, YI_TYPE_H264, YI_H264_ENC_FLAGS_PROFILE_HIGH);
         printf("main: yami_encoder_create rv %d\n", error);
 
         if (error == YI_SUCCESS)
