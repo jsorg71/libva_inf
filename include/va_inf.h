@@ -52,12 +52,15 @@
 
 #define VI_H264_ENC_FLAG_KEYFRAME       0x1
 
-struct va_funcs
+#define VI_H264_DEC_FLAG_LOWLATENCY     1
+
+struct va_inf_funcs
 {
     int (*get_version)(int *version);
     int (*init)(int type, void *display);
     int (*deinit)(void);
     VI_UINTPTR pad0[20 - 3];
+
     /* encoder */
     int (*encoder_create)(void **obj, int width, int height, int type, int flags);
     int (*encoder_delete)(void *obj);
@@ -69,11 +72,32 @@ struct va_funcs
                               int fd_stride, int fd_size, int fd_bpp);
     int (*encoder_encode)(void *obj, void *cdata, int *cdata_max_bytes, int flags);
     VI_UINTPTR pad1[20 - 8];
+
+    /* decoder */
+    int (*decoder_create)(void **obj, int width, int height, int type, int flags);
+    int (*decoder_delete)(void *obj);
+    int (*decoder_decode)(void *obj, void *cdata, int cdata_bytes);
+    int (*decoder_decode_time)(void *obj, void *cdata, int cdata_bytes,
+                               VI_INT64 time);
+    int (*decoder_get_fd_dst)(void *obj, int *fd, int *fd_width, int *fd_height,
+                              int *fd_stride, int *fd_size, int *fd_bpp,
+                              VI_INT64* fd_time);
+    VI_UINTPTR pad2[20 - 5];
+
+    /* surface */
+    int (*surface_create)(void **obj, int width, int height, int type, int flags);
+    int (*surface_delete)(void *obj);
+    int (*surface_get_ybuffer)(void *obj, void **ydata, int *ydata_stride_bytes);
+    int (*surface_get_uvbuffer)(void *obj, void **uvdata, int *uvdata_stride_bytes);
+    int (*surface_get_fd_dst)(void *obj, int *fd, int *fd_width, int *fd_height,
+                              int *fd_stride, int *fd_size, int *fd_bpp);
+    VI_UINTPTR pad3[20 - 5];
+
 };
 
 typedef int
-(*va_inf_get_funcs_proc)(struct va_funcs *funcs, int version);
+(*va_inf_get_funcs_proc)(struct va_inf_funcs *funcs, int version);
 int
-va_inf_get_funcs(struct va_funcs *funcs, int version);
+va_inf_get_funcs(struct va_inf_funcs *funcs, int version);
 
 #endif
