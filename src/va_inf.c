@@ -457,19 +457,29 @@ encoder_delete(void *obj)
 
 /*****************************************************************************/
 static int
-encoder_get_size(void *obj, int *width, int *height)
+encoder_get_width(void *obj, int *width)
 {
     struct va_inf_enc_priv *enc;
 
     enc = (struct va_inf_enc_priv *) obj;
     *width = enc->width;
+    return VI_SUCCESS;
+}
+
+/*****************************************************************************/
+static int
+encoder_get_height(void *obj, int *height)
+{
+    struct va_inf_enc_priv *enc;
+
+    enc = (struct va_inf_enc_priv *) obj;
     *height = enc->height;
     return VI_SUCCESS;
 }
 
 /*****************************************************************************/
 static int
-encoder_set_size(void *obj, int width, int height)
+encoder_resize(void *obj, int width, int height)
 {
     struct va_inf_enc_priv *enc;
     VAStatus va_status;
@@ -942,7 +952,18 @@ va_inf_encoder_generate_pps(struct va_inf_enc_priv *enc,
 
 /*****************************************************************************/
 static int
-encoder_encode(void *obj, void *cdata, int *cdata_max_bytes, int flags)
+encoder_encode_flags(void *obj, void *cdata, int *cdata_max_bytes, int flags);
+
+/*****************************************************************************/
+static int
+encoder_encode(void *obj, void *cdata, int *cdata_max_bytes)
+{
+    return encoder_encode_flags(obj, cdata, cdata_max_bytes, 0);
+}
+
+/*****************************************************************************/
+static int
+encoder_encode_flags(void *obj, void *cdata, int *cdata_max_bytes, int flags)
 {
     struct va_inf_enc_priv *enc;
     VAStatus va_status;
@@ -1499,12 +1520,14 @@ va_inf_get_funcs(struct va_inf_funcs *funcs, int version)
         /* encoder */
         funcs->encoder_create = encoder_create;
         funcs->encoder_delete = encoder_delete;
-        funcs->encoder_get_size = encoder_get_size;
-        funcs->encoder_set_size = encoder_set_size;
+        funcs->encoder_get_width = encoder_get_width;
+        funcs->encoder_get_height = encoder_get_height;
+        funcs->encoder_resize = encoder_resize;
         funcs->encoder_get_ybuffer = encoder_get_ybuffer;
         funcs->encoder_get_uvbuffer = encoder_get_uvbuffer;
         funcs->encoder_set_fd_src = encoder_set_fd_src;
         funcs->encoder_encode = encoder_encode;
+        funcs->encoder_encode_flags = encoder_encode_flags;
         /* decoder */
         /* surface */
         funcs->surface_create = surface_create;
